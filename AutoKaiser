@@ -1,0 +1,370 @@
+--[[ AutoKaiser - The Tormentor by turtlebot 1.0.3
+		Dependency: 
+			- Nothing
+		
+		Features:
+			- Auto R Killable Targets (Toggle On/Off)
+			- Auto E In Range Targets (Toggle On/Off)
+			- Attack Shield: Automatically triggers shield whenever enemy is within range of it's damage
+			- Shield Saver: Automatically self casts W whenever health is <= 20 % (Toggle On/Off)
+			- Shield Ally: Cast shield on in-range ally at custom % of health missing (Toggle On/Off)
+			- Range and Cooldown Markers: Show Range of W,E, and R. E + R circles disappear when spell on Cooldown
+			- Full Combo: Spacebar uses items, cast E, then R if killable.
+			- Ghost control: Holding spacebar will cause ghost to attack Current Target.
+		
+		
+		Changelog:
+			1.0.4
+				- Added use Q to full combo
+			1.0.3
+				- Added full combo
+				- Added ally Shield
+				- Added item use
+				- Added Ghost Control (Thanks again to Roach for all his help on this!)
+			1.0.2
+				- Fixed Shield Attack Option (Thanks Pain)
+			1.0.1
+				- First release
+  ]]--
+  
+-- / Hero Name Check / -- 
+if myHero.charName ~= "Mordekaiser" then return end
+-- /// Hero Name Check /// --
+
+-- / Auto Update / -- 
+local AUTOUPDATE = true --change to false to disable auto update
+local SCRIPT_NAME = "AutoKaiser - The Tormentor"
+local MAJORVERSION = 1
+local SUBVERSION = 4
+local VERSION = tostring(MAJORVERSION) .. "." .. tostring(SUBVERSION) 
+--[[
+local PATH = SCRIPT_PATH..GetCurrentEnv().FILE_NAME
+local URL = "http://www.hackavistic.com/leagueoflegends/bol/scripts/All-In-One%20Soraka.lua"
+local UPDATE_TEMP_FILE = SCRIPT_PATH.."AutoKaiserUpdateTemp.txt"
+local UPDATE_CHANGE_LOG = "Added use Q in combo and Auto Update."
+--]]
+-- /// Auto Update /// -- 
+
+-- / Recalling checks / --
+local isRecalling = false
+local RECALL_DELAY = 0.2
+
+function OnCreateObj(obj)
+	-- Check if player is recalling and set isrecalling
+	if obj.name:find("TeleportHome.troy") then
+		if GetDistance(obj, myHero) <= 70 then
+			isRecalling = true
+		end
+	end
+end
+
+function OnDeleteObj(obj)
+	if obj.name:find("TeleportHome.troy") then
+		-- Set isRecalling off after short delay to prevent using abilities once at base
+		DelayAction(function() isRecalling = false end, RECALL_DELAY)
+	end
+end
+-- /// Recalling checks /// --
+
+-- / Loading Function / --
+function OnLoad()
+	Variables()
+	MordeMenu()
+	PrintChat("<font color=\"#00FF00\">" .. SCRIPT_NAME .. ": </font><font color=\"#FF9900\">v"..VERSION.." <font color='#00FF00\'>loaded.</font>")
+end
+-- /// Loading Function /// --
+
+
+
+-- / Tick Function / --
+function OnTick()
+	Checks()
+	DamageCalculation()
+		-- Recall Check
+	if (isRecalling) then
+		return -- Don't do anything to cancel recall
+	end
+
+	-- Menu Vars --
+	ComboKey = MordeMenu.combo.ComboKey
+	AutoUltiKey = MordeMenu.AutoUlti
+	AutoSiphonKey = MordeMenu.AutoSiphon
+	AttackShieldKey = MordeMenu.AttackShield
+	SafetyShieldKey = MordeMenu.SafetyShield
+	AllyShieldKey = MordeMenu.AllyShield
+	
+	if ComboKey then FullCombo() end
+	if AutoUltiKey then AutoUlti() end
+	if AutoSiphonKey then AutoSiphon() end
+	if AttackShieldKey then AttackShield() end
+	if SafetyShieldKey then SafetyShield() end
+	if AllyShieldKey then AllyShield() end
+end
+-- /// Tick Function /// --
+
+-- / Variables Function / --
+function Variables()
+	qRange, wRange, eRange, rRange = math.huge, 250, 670, 850
+	qName, wName, eName, rName = "Mace of Spades", "Creeping Death", "Siphon of Destruction", "Children of the Grave"
+	qReady, wReady, eReady, rReady = false, false, false, false
+	hpReady, mpReady, fskReady, Recalling = false, false, false, false
+	TextList = {"Harass him!!", "Q+W+E KILL!!", "x2Q+W+E KILL!", "ult+Q+W+E KILL!"}
+	KillText = {}
+	waittxt = {} -- prevents UI lags, all credits to Dekaron
+	usingHPot, usingMPot, usingUlt, rManual = false, false, false, false
+	for i=1, heroManager.iCount do waittxt[i] = i*3 end
+	enemyMinions = minionManager(MINION_ENEMY, qRange, player, MINION_SORT_HEALTH_ASC)
+	gDelay = 0
+	lastAnimation = nil
+	lastAttack = 0
+	lastAttackCD = 0
+	lastWindUpTime = 0
+	allyHeroes = GetAllyHeroes()
+end
+-- /// Variables Function /// --
+
+-- / Menu Function / --
+function MordeMenu()
+	MordeMenu = scriptConfig("AutoKaiser - The Tormentor", "Mordekaiser")
+	
+		MordeMenu:addSubMenu("["..myHero.charName.." - Combo Settings]", "combo")
+			MordeMenu.combo:addParam("ComboKey", "Full Combo Key (SBTW)", SCRIPT_PARAM_ONKEYDOWN, false, 32)
+			MordeMenu.combo:addParam("ComboItems", "Use Items with Burst", SCRIPT_PARAM_ONOFF, true)
+			MordeMenu.combo:permaShow("ComboKey")
+			
+		MordeMenu:addParam("AutoUlti", "Auto Ulti Toggle-H", SCRIPT_PARAM_ONKEYTOGGLE, true, GetKey("H"))
+		MordeMenu:addParam("AutoSiphon", "Auto Siphon (E) Toggle-Z", SCRIPT_PARAM_ONKEYTOGGLE, true, GetKey("Z"))
+		MordeMenu:addParam("AttackShield", "Shield Attack Toggle-J", SCRIPT_PARAM_ONKEYTOGGLE, true, GetKey("J"))
+		MordeMenu:addParam("SafetyShield", "Safety Shield Toggle-K", SCRIPT_PARAM_ONKEYTOGGLE, true, GetKey("K"))
+		MordeMenu:addParam("AllyShield", "Ally Shield Toggle-L", SCRIPT_PARAM_ONKEYTOGGLE, true, GetKey("L"))
+		MordeMenu:addParam("AllyShieldSlice", "Min %HP to Shield an Ally", SCRIPT_PARAM_SLICE, 35, 0, 100, -1)
+		MordeMenu:permaShow("AutoUlti")
+		MordeMenu:permaShow("AttackShield")
+		MordeMenu:permaShow("SafetyShield")
+		MordeMenu:permaShow("AllyShield")
+		MordeMenu:permaShow("AllyShieldSlice")
+		MordeMenu:permaShow("AutoSiphon")
+		
+		MordeMenu:addSubMenu("["..myHero.charName.." - Drawing Settings]", "drawing")	
+			MordeMenu.drawing:addParam("mDraw", "Disable All Ranges Drawing", SCRIPT_PARAM_ONOFF, false)
+			MordeMenu.drawing:addParam("cDraw", "Draw Enemy Text", SCRIPT_PARAM_ONOFF, true)
+
+		
+	TargetSelector = TargetSelector(TARGET_LOW_HP, wRange,DAMAGE_PHYSICAL)
+	TargetSelector.name = "Mordekaiser"
+	MordeMenu:addTS(TargetSelector)
+end
+-- /// Menu Function /// --
+
+-- / Full Combo Function / --
+function FullCombo()
+		if MordeMenu.combo.ComboItems then
+			UseItems(Target)
+		end
+		if ValidTarget(Target) then
+				if eReady and GetDistance(Target) <= eRange then
+					CastSpell(_E, Target)
+				end
+				if rReady and rGhost and GetTickCount() >= gDelay then
+					CastSpell(_R, Target) 
+					gDelay = GetTickCount() + 1000
+				elseif rReady and Target.health < rDmg and GetDistance(Target) <= rRange and not rGhost then
+					CastSpell(_R, Target)
+				end
+				if qReady then
+					CastSpell(_Q, Target)
+				end
+		end
+end
+-- /// Full Combo Function /// --
+
+-- / Auto Ulti Function / --
+function AutoUlti()
+	if MordeMenu.AutoUlti then
+		if ValidTarget(Target) then
+			if rReady and rGhost and GetTickCount() >= gDelay then
+					CastSpell(_R, Target) 
+					gDelay = GetTickCount() + 1000
+			elseif rReady and Target.health <= rDmg and GetDistance(Target) <= rRange and not rGhost then
+				CastSpell(_R, Target)
+			end
+		end
+	end
+end
+-- /// Auto Ulti Function /// --
+
+-- / Auto Siphon (E) Function / --
+function AutoSiphon()
+	if MordeMenu.AutoSiphon then
+		if Target ~= nil then
+			if eReady and GetDistance(Target) <= eRange then
+				CastSpell(_E, Target)
+			end
+		end
+	end
+end
+-- /// Auto Siphon (E) Function /// --
+
+-- / Attack Shield / -- Currently Not working :( 
+function AttackShield()
+	if MordeMenu.AttackShield then
+		if Target ~= nil then
+			if wReady and GetDistance(Target) <= wRange then
+				CastSpell(_W, myHero)
+			end
+		end
+	end
+end
+-- /// Attack Shield /// --
+	
+-- / Safety Shield Function / --	
+function SafetyShield()	
+	if MordeMenu.SafetyShield then -- Checks if Safety Shield is enabled in menu option
+		if myHero.health < myHero.maxHealth*0.2 and wReady then -- Checks if current health is less than 30%
+			CastSpell(_W, myHero) -- Casts W on self
+		end
+	end
+end
+-- /// Safety Shield Function /// --
+
+-- / Ally Shield Function / --	
+function AllyShield()	
+	if MordeMenu.AllyShield then -- Checks if Ally Shield is enabled in menu option
+		for _, ally in pairs(allyHeroes) do
+			if GetDistance(ally) < (500 + wRange) and (ally.health / ally.maxHealth) < (MordeMenu.AllyShieldSlice / 100) and wReady then -- Checks if current health is less than SLICE & W Ready & If there are more one or more Enemies in 250 Range
+				CastSpell(_W, ally) -- Casts W on 'ally'
+			end
+		end
+	end
+end
+-- /// Ally Shield Function /// --
+
+-- / Use Items Function / --
+function UseItems(enemy)
+	if not enemy then
+		enemy = Target
+	end
+	if ValidTarget(enemy) then
+		if dfgReady and GetDistance(enemy) <= 600 then CastSpell(dfgSlot, enemy) end
+		if bftReady and GetDistance(enemy) <= 600 then CastSpell(bftSlot, enemy) end
+		if hxgReady and GetDistance(enemy) <= 600 then CastSpell(hxgSlot, enemy) end
+		if bwcReady and GetDistance(enemy) <= 450 then CastSpell(bwcSlot, enemy) end
+		if brkReady and GetDistance(enemy) <= 450 then CastSpell(brkSlot, enemy) end
+		if tmtReady and GetDistance(enemy) <= 185 then CastSpell(tmtSlot) end
+		if hdrReady and GetDistance(enemy) <= 185 then CastSpell(hdrSlot) end
+	end
+end
+-- /// Use Items Function /// --
+
+-- / Damage Calculation Function / --
+function DamageCalculation()
+	for i=1, heroManager.iCount do
+	local enemy = heroManager:GetHero(i)
+		if ValidTarget(enemy) then
+			dfgDmg, hxgDmg, bwcDmg, iDmg  = 0, 0, 0, 0
+			qDmg, wDmg, eDmg, rDmg = 0, 0, 0, 0
+			aDmg = getDmg("AD", enemy, myHero)
+			pDmg = getDmg("P", enemy, myHero)
+			if qReady then qDmg = getDmg("Q",enemy,myHero) + aDmg end
+			if wReady then wDmg = getDmg("W",enemy,myHero) end
+			if eReady then eDmg = getDmg("E",enemy,myHero) end
+			if rReady then rDmg = getDmg("R",enemy,myHero) end
+			if dfgReady then dfgDmg = (dfgSlot and getDmg("DFG",enemy,myHero) or 0)	end
+			if hxgReady then hxgDmg = (hxgSlot and getDmg("HXG",enemy,myHero) or 0) end
+			if bwcReady then bwcDmg = (bwcSlot and getDmg("BWC",enemy,myHero) or 0) end
+			if iReady then iDmg = (ignite and getDmg("IGNITE",enemy,myHero) or 0) end
+			onspellDmg = (liandrysSlot and getDmg("LIANDRYS",enemy,myHero) or 0)+(blackfireSlot and getDmg("BLACKFIRE",enemy,myHero) or 0)
+			itemsDmg = dfgDmg + hxgDmg + bwcDmg + iDmg + onspellDmg
+				KillText[i] = 1 
+			if enemy.health <= (qDmg + eDmg + wDmg + itemsDmg) then
+				KillText[i] = 2
+			elseif enemy.health <= ((qDmg*2) + eDmg + wDmg + itemsDmg) then
+				KillText[i] = 3
+			elseif enemy.health <= ((qDmg*2) + pDmg + wDmg + eDmg + itemsDmg) then
+				KillText[i] = 4
+			end
+		end
+	end
+end
+-- /// Damage Calculation Function /// --
+
+-- / Checks Function / --
+function Checks()
+	-- Updates Targets --
+	TargetSelector:update()
+	tsTarget = TargetSelector.target
+	if tsTarget and tsTarget.type == "obj_AI_Hero" then
+		Target = tsTarget
+	else
+		Target = nil
+	end
+	if tsTarget == nil then
+		TargetSelector.range = rRange
+		TargetSelector:update()
+		tsTarget = TargetSelector.target
+	end
+	
+		-- Finds Ignite --
+	if myHero:GetSpellData(SUMMONER_1).name:find("SummonerDot") then
+		ignite = SUMMONER_1
+	elseif myHero:GetSpellData(SUMMONER_2).name:find("SummonerDot") then
+		ignite = SUMMONER_2
+	end
+	
+	-- Slots for Items / Pots / Wards --
+	rstSlot, ssSlot, swSlot, vwSlot =		GetInventorySlotItem(2045),
+											GetInventorySlotItem(2049),
+											GetInventorySlotItem(2044),
+											GetInventorySlotItem(2043)
+	dfgSlot, hxgSlot, bwcSlot, brkSlot =	GetInventorySlotItem(3128),
+											GetInventorySlotItem(3146),
+											GetInventorySlotItem(3144),
+											GetInventorySlotItem(3153)
+	hpSlot, mpSlot, fskSlot =				GetInventorySlotItem(2003),
+											GetInventorySlotItem(2004),
+											GetInventorySlotItem(2041)
+	znaSlot, wgtSlot =						GetInventorySlotItem(3157),
+											GetInventorySlotItem(3090)
+	tmtSlot, hdrSlot =						GetInventorySlotItem(3077),
+											GetInventorySlotItem(3074)
+	
+	-- Spells --									 
+	qReady = (myHero:CanUseSpell(_Q) == READY)
+	wReady = (myHero:CanUseSpell(_W) == READY)
+	eReady = (myHero:CanUseSpell(_E) == READY)
+	rReady = (myHero:CanUseSpell(_R) == READY)
+	iReady = (ignite ~= nil and myHero:CanUseSpell(ignite) == READY)
+	
+	-- Items --
+	dfgReady = (dfgSlot ~= nil and myHero:CanUseSpell(dfgSlot) == READY)
+	hxgReady = (hxgSlot ~= nil and myHero:CanUseSpell(hxgSlot) == READY)
+	bwcReady = (bwcSlot ~= nil and myHero:CanUseSpell(bwcSlot) == READY)
+	brkReady = (brkSlot ~= nil and myHero:CanUseSpell(brkSlot) == READY)
+	znaReady = (znaSlot ~= nil and myHero:CanUseSpell(znaSlot) == READY)
+	wgtReady = (wgtSlot ~= nil and myHero:CanUseSpell(wgtSlot) == READY)
+	tmtReady = (tmtSlot ~= nil and myHero:CanUseSpell(tmtSlot) == READY)
+	hdrReady = (hdrSlot ~= nil and myHero:CanUseSpell(hdrSlot) == READY)
+	
+	-- Pots --
+	hpReady = (hpSlot ~= nil and myHero:CanUseSpell(hpSlot) == READY)
+	mpReady =(mpSlot ~= nil and myHero:CanUseSpell(mpSlot) == READY)
+	fskReady = (fskSlot ~= nil and myHero:CanUseSpell(fskSlot) == READY)
+	
+	-- Ghost --
+	rGhost = (myHero:GetSpellData(_R).name == "mordekaisercotgguide")
+end
+-- /// Checks Function /// --
+
+-- / Draw Circles + CD Display / --
+function OnDraw()
+	if not MordeMenu.drawing.mDraw and not myHero.dead and myHero:CanUseSpell(_E) == READY then -- Makes sure champ not dead and spell off cool down
+		DrawCircle(myHero.x, myHero.y, myHero.z, eRange, 0xFC00FF) -- A circle to show his E range.
+	end	
+	if not MordeMenu.drawing.mDraw and not myHero.dead then -- Makes sure champ not dead
+		DrawCircle(myHero.x, myHero.y, myHero.z, wRange, 0xFC00FF) -- A circle to show his W range.
+	end	
+	if not MordeMenu.drawing.mDraw and not myHero.dead and myHero:CanUseSpell(_R) == READY then -- Makes sure champ not dead and spell off cool down
+		DrawCircle(myHero.x, myHero.y, myHero.z, rRange, 0xFF80FF00) -- A circle to show his R range.
+	end	
+end
+-- /// Draw Circles + CD Display /// --
